@@ -1,0 +1,63 @@
+name: AWS SSM Send Command (Powershell)
+description: "Send a powershell command to an EC2 instance using AWS SSM"
+inputs:
+  aws-region:
+    required: true
+    description: "The AWS region"
+  instance-id:
+    required: true
+    description: "The instance ID"
+  script:
+    required: true
+    description: "The powershell script to send"
+  disable-error-handling:
+    required: false
+    description: "If specified, disable error handling"
+    default: "false"
+
+outputs:
+  command-id:
+    description: "The ID of the command"
+    value: ${{ steps.aws-ssm-send-command.outputs.command-id }}
+  result:
+    description: "The result of the command"
+    value: ${{ steps.aws-ssm-send-command.outputs.result }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: wrap-script
+      # Wrap the script in a try-catch block to ensure the action returns a non-zero exit code if there is an error
+      if: ${{ !fromJson(inputs.disable-error-handling) }}
+      shell: bash
+      run: |
+        echo "script<<EOF" >> $GITHUB_OUTPUT
+        cat <<'EOFF' >> $GITHUB_OUTPUT
+        $ErrorActionPreference = 'Stop'
+        $ProgressPreference = 'SilentlyContinue'
+        try {
+        ${{ inputs.script }}
+        } catch {
+          Write-Error $_
+          exit 1
+        }
+        exit 0
+        EOFF
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - id: powershell-base64-encode
+      shell: bash
+      run: |
+        echo -n "base64=" >> $GITHUB_OUTPUT
+        cat <<'EOF' | sed 's/\r$//' | sed 's/$/\r/' | iconv --from-code UTF-8 --to-code UTF-16LE | base64 -w 0 >> $GITHUB_OUTPUT
+        ${{ steps.wrap-script.outputs.script || inputs.script }}
+        EOF
+
+    - id: aws-ssm-send-command
+      uses: geeknz/actions/aws-ssm-send-command@v1.0.0
+      with:
+        aws-region: ${{ inputs.aws-region }}
+        instance-id: ${{ inputs.instance-id }}
+        document-name: "AWS-RunPowerShellScript"
+        # Note: Be careful with the command. It must be a single line or it will be interpreted as utf-8 with unix line endings and will fail
+        command: "powershell -EncodedCommand ${{ steps.powershell-base64-encode.outputs.base64 }}; exit $LASTEXITCODE"

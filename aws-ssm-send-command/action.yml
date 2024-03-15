@@ -1,0 +1,61 @@
+name: AWS SSM Send Command
+description: "Send a command to an EC2 instance using AWS SSM"
+inputs:
+  aws-region:
+    required: true
+    description: "The AWS region"
+  instance-id:
+    required: true
+    description: "The instance ID"
+  document-name:
+    required: true
+    description: "The name of the SSM document"
+  command:
+    required: true
+    description: "The command to send"
+outputs:
+  command-id:
+    description: "The ID of the command"
+    value: ${{ fromJson(steps.aws-ssm-send-command.outputs.invocation).Command.CommandId }}
+  result:
+    description: "The result of the command"
+    value: ${{ steps.aws-ssm-get-command-invocation.outputs.result }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: commands
+      # Build the commands json array from the command input
+      shell: bash
+      run: |
+        echo -n "json=" >> $GITHUB_OUTPUT
+        cat <<'EOF' | jq -R -c '[.]' >> $GITHUB_OUTPUT
+        ${{ inputs.command }}
+        EOF
+
+    - id: aws-ssm-send-command
+      shell: bash
+      run: |
+        invocation=$(aws ssm send-command \
+          --instance-ids "${{ inputs.instance-id }}" \
+          --document-name "${{ inputs.document-name }}" \
+          --parameters "commands=$(echo '${{ steps.commands.outputs.json }}')" \
+          --output json)
+         echo "invocation=$(echo $invocation | jq -c .)" >> $GITHUB_OUTPUT
+
+    - id: aws-ssm-wait-command-executed
+      continue-on-error: true
+      shell: bash
+      run: aws ssm wait command-executed --command-id ${{ fromJson(steps.aws-ssm-send-command.outputs.invocation).Command.CommandId }} --instance-id "${{ inputs.instance-id }}"
+
+    - id: aws-ssm-get-command-invocation
+      shell: bash
+      run: |
+        result=$(aws ssm get-command-invocation \
+          --instance-id "${{ inputs.instance-id }}" \
+          --command-id ${{ fromJson(steps.aws-ssm-send-command.outputs.invocation).Command.CommandId }} \
+          --output json)
+        echo "result=$(echo "$result" | jq -c .)" >> $GITHUB_OUTPUT
+        echo "$result" | jq -r '.StandardOutputContent'
+        echo "$result" | jq -r '.StandardErrorContent' >&2
+        exit $(echo "$result" | jq -r '.ResponseCode')
