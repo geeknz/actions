@@ -14,6 +14,10 @@ inputs:
     required: false
     description: "If specified, disable error handling"
     default: "false"
+  wait_attempts:
+    required: false
+    description: "The number of attempts to wait for the command to be executed"
+    default: "10"
 
 outputs:
   command-id:
@@ -54,10 +58,11 @@ runs:
         EOF
 
     - id: aws-ssm-send-command
-      uses: geeknz/actions/aws-ssm-send-command@v1.0.0
+      uses: geeknz/actions/aws-ssm-send-command@v1.1.0
       with:
         aws-region: ${{ inputs.aws-region }}
         instance-id: ${{ inputs.instance-id }}
         document-name: "AWS-RunPowerShellScript"
         # Note: Be careful with the command. It must be a single line or it will be interpreted as utf-8 with unix line endings and will fail
         command: "powershell -EncodedCommand ${{ steps.powershell-base64-encode.outputs.base64 }}; exit $LASTEXITCODE"
+        wait_attempts: ${{ inputs.wait_attempts }}
